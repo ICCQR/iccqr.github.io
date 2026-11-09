@@ -1,0 +1,280 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>ICCQR Calibration Markers</title>
+<meta name="description" content="Turn a display's ICC profile into a printable QR calibration marker, and scan it later to get the .icc back.">
+<link rel="icon" type="image/png" sizes="32x32" href="data:image/png;base64,/*ICON:favicon-32.png*/">
+<link rel="apple-touch-icon" sizes="180x180" href="data:image/png;base64,/*ICON:apple-touch-icon-180.png*/">
+<style>
+/* Self-hosted fonts (SIL OFL, see fonts/). The build runs these through the Invisible Ink PostCSS plugin. */
+@font-face { font-family: "Archivo"; font-style: normal; font-weight: 100 900; font-stretch: 62% 125%; font-display: swap;
+  src: url("fonts/archivo.woff2") format("woff2-variations"); unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD; invisible-ink: hollow; }
+@font-face { font-family: "IBM Plex Sans"; font-style: normal; font-weight: 100 700; font-display: swap;
+  src: url("fonts/ibm-plex-sans.woff2") format("woff2-variations"); unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD; invisible-ink: hollow; }
+@font-face { font-family: "IBM Plex Mono"; font-style: normal; font-weight: 400; font-display: swap;
+  src: url("fonts/ibm-plex-mono-400.woff2") format("woff2"); unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD; invisible-ink: hollow; }
+@font-face { font-family: "IBM Plex Mono"; font-style: normal; font-weight: 600; font-display: swap;
+  src: url("fonts/ibm-plex-mono-600.woff2") format("woff2"); unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD; invisible-ink: hollow; }
+/* Layout: label-maker workbench. Controls on the left, the printed marker on a sheet at right, colorimetric readouts below. */
+:root {
+  --bg: #eceeed; --surface: #ffffff; --ink: #15181b; --muted: #59615d; --line: #cfd4d1; --field: #f6f7f6;
+  --accent: #b8155a; --accent-ink: #ffffff; --accent-soft: #f7dfe9; --warn-bg: #fff4d6; --warn-ink: #5c4300;
+  --ch-r: #cf3b33; --ch-g: #23894a; --ch-b: #2f5fd0;
+  --font-display: "Archivo", "Arial Narrow", system-ui, sans-serif;
+  --font-body: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, Menlo, Consolas, monospace;
+  --r: 6px;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #111315; --surface: #1a1d20; --ink: #e7eae8; --muted: #9ba39f; --line: #2e3337; --field: #14171a;
+  --accent: #ff5c9d; --accent-ink: #16070e; --accent-soft: #3a1426; --warn-bg: #352a0c; --warn-ink: #f4dc9a;
+  --ch-r: #ff6b62; --ch-g: #4fca78; --ch-b: #6f95ff; color-scheme: dark; } }
+:root[data-theme="dark"] {
+  --bg: #111315; --surface: #1a1d20; --ink: #e7eae8; --muted: #9ba39f; --line: #2e3337; --field: #14171a;
+  --accent: #ff5c9d; --accent-ink: #16070e; --accent-soft: #3a1426; --warn-bg: #352a0c; --warn-ink: #f4dc9a;
+  --ch-r: #ff6b62; --ch-g: #4fca78; --ch-b: #6f95ff; color-scheme: dark; }
+
+* { box-sizing: border-box; }
+html { padding-top: env(safe-area-inset-top, 0px); padding-bottom: env(safe-area-inset-bottom, 0px); }
+body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.55 var(--font-body);
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+.wrap { max-width: 1120px; margin: 0 auto; padding-block: 28px 64px; display: grid; gap: 28px; }
+h1, h2 { font-family: var(--font-display); text-wrap: balance; margin: 0; }
+h1 { font-weight: 800; font-stretch: 125%; font-size: clamp(1.9rem, 4.2vw, 2.7rem); line-height: 1; letter-spacing: -0.01em; }
+h1 span { color: var(--accent); }
+h2 { font-weight: 600; font-stretch: 112%; font-size: 1.05rem; }
+.lede { margin: 10px 0 0; max-width: 62ch; color: var(--muted); }
+.label { font: 600 0.72rem/1 var(--font-mono); text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); }
+.mono { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+header { display: grid; gap: 4px; }
+
+.notice { background: var(--warn-bg); color: var(--warn-ink); border-radius: var(--r); padding: 12px 14px; font-size: 0.92rem; }
+.notice strong { font-weight: 600; }
+
+.bench { display: grid; grid-template-columns: minmax(0, 360px) minmax(0, 1fr); gap: 20px; align-items: start; }
+@media (max-width: 820px) { .bench { grid-template-columns: minmax(0, 1fr); } }
+.panel { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r); padding: 18px; display: grid; gap: 16px; min-width: 0; }
+
+.drop { border: 1.5px dashed var(--line); border-radius: var(--r); padding: 16px; display: grid; gap: 6px; background: var(--field); cursor: pointer; transition: border-color .15s, background .15s; }
+.drop:hover, .drop.over { border-color: var(--accent); background: var(--accent-soft); }
+.drop:focus-within { outline: 2px solid var(--accent); outline-offset: 2px; }
+.drop input { position: absolute; width: 1px; height: 1px; opacity: 0; }
+.drop .file { font-weight: 600; overflow-wrap: anywhere; }
+.drop .hint { color: var(--muted); font-size: 0.86rem; }
+.tag { display: inline-block; font: 600 0.68rem/1 var(--font-mono); letter-spacing: .06em; text-transform: uppercase; padding: 4px 6px; border-radius: 4px; background: var(--accent-soft); color: var(--accent); vertical-align: 2px; margin-left: 6px; }
+
+.field { display: grid; gap: 6px; }
+.field input[type=text], .field input[type=url], .field input[type=date], .field input[type=number] {
+  width: 100%; font: inherit; color: var(--ink); background: var(--field); border: 1px solid var(--line); border-radius: 5px; padding: 8px 10px; min-width: 0; }
+.field input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; border-color: transparent; }
+.field small { color: var(--muted); font-size: 0.82rem; line-height: 1.4; }
+.row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+fieldset { border: 0; padding: 0; margin: 0; display: grid; gap: 6px; min-width: 0; }
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 5px; overflow: hidden; background: var(--field); }
+.seg label { position: relative; }
+.seg input { position: absolute; opacity: 0; }
+.seg span { display: block; padding: 6px 12px; font: 500 0.85rem/1.2 var(--font-mono); cursor: pointer; color: var(--muted); border-left: 1px solid var(--line); }
+.seg label:first-child span { border-left: 0; }
+.seg input:checked + span { background: var(--ink); color: var(--surface); }
+.seg input:focus-visible + span { outline: 2px solid var(--accent); outline-offset: -2px; }
+.seg input:disabled + span { opacity: .4; cursor: not-allowed; }
+.check { display: flex; gap: 8px; align-items: center; font-size: 0.92rem; }
+.check input { accent-color: var(--accent); width: 16px; height: 16px; }
+details.more summary { cursor: pointer; font-weight: 500; color: var(--muted); font-size: 0.9rem; }
+details.more[open] summary { margin-bottom: 12px; }
+details.more > div { display: grid; gap: 14px; }
+
+.sheet { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r); display: grid; gap: 0; min-width: 0; overflow: hidden; }
+.paper { background: repeating-linear-gradient(45deg, var(--field) 0 10px, var(--bg) 10px 20px); padding: 28px 16px; display: grid; place-items: center; min-height: 340px; }
+.paper .marker { width: min(100%, 340px); filter: drop-shadow(0 2px 3px rgba(0,0,0,.18)) drop-shadow(0 10px 22px rgba(0,0,0,.12)); }
+.paper .marker svg { display: block; width: 100%; height: auto; }
+.paper .err { max-width: 40ch; text-align: center; color: var(--ink); background: var(--surface); padding: 16px; border-radius: var(--r); border: 1px solid var(--line); }
+.readout { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); border-top: 1px solid var(--line); }
+.readout div { padding: 12px 16px; display: grid; gap: 4px; border-right: 1px solid var(--line); min-width: 0; }
+.readout div:last-child { border-right: 0; }
+.readout b { font: 600 1rem/1.25 var(--font-mono); font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.readout em { font-style: normal; color: var(--muted); font-size: 0.8rem; }
+.actions { display: flex; flex-wrap: wrap; gap: 8px; padding: 14px 16px; border-top: 1px solid var(--line); align-items: center; }
+button, .btn { font: 600 0.9rem/1 var(--font-body); padding: 10px 14px; border-radius: 5px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); cursor: pointer; text-decoration: none; display: inline-flex; align-items: center; gap: 6px; }
+button:hover, .btn:hover { border-color: var(--ink); }
+button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+button.primary:hover { filter: brightness(1.08); }
+button:focus-visible, .btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.status { font-size: 0.85rem; color: var(--muted); }
+.linkbox { width: 100%; font: 0.78rem/1.4 var(--font-mono); color: var(--muted); background: var(--field); border: 1px solid var(--line); border-radius: 5px; padding: 8px 10px; resize: none; overflow-wrap: anywhere; }
+
+.details { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px; }
+.plot svg { width: 100%; height: auto; display: block; }
+.plot .axis { stroke: var(--line); stroke-width: 1; }
+.plot text { fill: var(--muted); font: 10px var(--font-mono); }
+.legend { display: flex; flex-wrap: wrap; gap: 14px; font-size: 0.82rem; color: var(--muted); }
+.legend i { display: inline-block; width: 14px; height: 3px; border-radius: 2px; vertical-align: middle; margin-right: 6px; }
+table.spec { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+table.spec th { text-align: left; font-weight: 500; color: var(--muted); padding: 7px 12px 7px 0; vertical-align: top; width: 38%; }
+table.spec td { padding: 7px 0; font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-size: 0.85rem; overflow-wrap: anywhere; }
+table.spec tr + tr > * { border-top: 1px solid var(--line); }
+.spec-wrap { overflow-x: auto; }
+
+/* decode view */
+.found { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 20px; align-items: end; }
+@media (max-width: 640px) { .found { grid-template-columns: minmax(0, 1fr); } }
+.found .date { font: 800 clamp(2.4rem, 9vw, 4.6rem)/0.95 var(--font-display); font-stretch: 125%; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
+.found .who { font-size: 1.05rem; margin-top: 10px; }
+.found .who span { color: var(--muted); }
+.found .acts { display: flex; flex-wrap: wrap; gap: 8px; }
+.howto { color: var(--muted); font-size: 0.9rem; max-width: 70ch; display: grid; gap: 6px; }
+.howto p, .howto ul { margin: 0; }
+.howto ul { padding-left: 1.2em; display: grid; gap: 4px; }
+.howto strong { color: var(--ink); font-weight: 600; }
+.howto.no-vc .vc { display: none; }
+footer { color: var(--muted); font-size: 0.82rem; border-top: 1px solid var(--line); padding-top: 16px; }
+footer a { color: inherit; }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>ICC<span>QR</span> calibration markers</h1>
+    <p class="lede" id="lede">Drop in your display's ICC profile to get a printable QR calibration marker. Attach it to the screen it belongs to. Scanning it opens this page with the calibration inside the link, ready to save as an <span class="mono">.icc</span> file.</p>
+  </header>
+
+  <!-- ===== decode view ===== -->
+  <section id="decodeView" hidden>
+    <div class="panel">
+      <div class="found">
+        <div>
+          <div class="label">Calibrated</div>
+          <div class="date mono" id="dDate"></div>
+          <div class="who" id="dWho"></div>
+        </div>
+        <div class="acts">
+          <button class="primary" id="dSave" type="button">Save .icc file</button>
+          <button id="dShare" type="button" hidden>Share file…</button>
+          <button id="dCopy" type="button">Copy link</button>
+        </div>
+      </div>
+      <div class="howto" id="howto">
+        <p>Install it on the computer this display is attached to.</p>
+        <ul>
+          <li><strong>Windows:</strong> open Color Management, choose the display, add the file and set it as the default.<span class="vc"> Then tick <em>Use Windows display calibration</em> on the Advanced tab, or the video card curves won't load. A calibration loader such as DisplayCAL's also works.</span></li>
+          <li><strong>macOS:</strong> copy it to <span class="mono">~/Library/ColorSync/Profiles</span> and pick it in Displays settings.<span class="vc"> The video card curves load automatically.</span></li>
+          <li><strong>Linux:</strong> add it under Settings → Color in GNOME (colord)<span class="vc">, which also loads the video card curves. Elsewhere, ArgyllCMS's <span class="mono">dispwin -I</span> installs it and loads the curves</span>.</li>
+        </ul>
+      </div>
+      <div class="status" id="dStatus" role="status"></div>
+      <textarea class="linkbox" id="dLink" rows="2" readonly aria-label="Link to this calibration" hidden></textarea>
+    </div>
+    <p class="status"><a class="btn" href="#" id="toMaker">Make a marker for another profile</a></p>
+  </section>
+  <section id="decodeError" class="notice" hidden></section>
+
+  <!-- ===== maker view ===== -->
+  <section id="makerView">
+    <div class="notice" id="hostNote" hidden><strong>Markers link to https://iccqr.github.io/.</strong> This copy isn't running from a web address, so it uses that one. Publish this file there as <span class="mono">index.html</span>, or set a different decoder address under Encoding and link.</div>
+    <div class="bench" style="margin-top:16px">
+      <form class="panel" id="form" autocomplete="off">
+        <label class="drop" id="drop" for="file">
+          <input type="file" id="file" accept=".icc,.icm,application/vnd.iccprofile">
+          <span class="label">Profile</span>
+          <span class="file" id="fileName"></span>
+          <span class="hint">Choose or drop an <span class="mono">.icc</span> / <span class="mono">.icm</span> file. It stays in your browser.</span>
+        </label>
+        <div class="status" id="fileMsg" role="status"></div>
+
+        <div class="field">
+          <label class="label" for="note">Note <span id="noteCount" style="float:right;letter-spacing:0"></span></label>
+          <input type="text" id="note" maxlength="36" placeholder="Brightness 35 · Contrast 75 · Custom">
+          <small>Printed under the date. Record the display's own settings; the profile is only right at those settings.</small>
+        </div>
+        <div class="field">
+          <label class="label" for="desc">Profile name</label>
+          <input type="text" id="desc" maxlength="60">
+          <small>The name your system shows when you pick the profile. It's carried in the link, not printed.</small>
+        </div>
+        <div class="row2">
+          <div class="field">
+            <label class="label" for="date">Calibration date</label>
+            <input type="date" id="date">
+          </div>
+          <div class="field">
+            <label class="label" for="mm">Module size, mm</label>
+            <input type="number" id="mm" min="0.3" max="2" step="0.05" value="0.5">
+          </div>
+        </div>
+
+        <details class="more">
+          <summary>Encoding and link</summary>
+          <div>
+            <fieldset>
+              <legend class="label">Curve detail</legend>
+              <div class="seg" role="radiogroup">
+                <label><input type="radio" name="samples" value="17"><span>17 pts</span></label>
+                <label><input type="radio" name="samples" value="33" checked><span>33 pts</span></label>
+                <label><input type="radio" name="samples" value="65"><span>65 pts</span></label>
+              </div>
+              <small class="status">Measured curves are resampled to this many points and rebuilt smoothly. More points means a denser code.</small>
+            </fieldset>
+            <fieldset>
+              <legend class="label">Error correction</legend>
+              <div class="seg">
+                <label><input type="radio" name="ecc" value="M"><span>M 15%</span></label>
+                <label><input type="radio" name="ecc" value="Q" checked><span>Q 25%</span></label>
+                <label><input type="radio" name="ecc" value="H"><span>H 30%</span></label>
+              </div>
+              <small class="status">Higher levels survive more scuffing but make the code denser.</small>
+            </fieldset>
+            <div class="field">
+              <label class="label" for="base">Decoder address</label>
+              <input type="url" id="base" placeholder="https://iccqr.github.io/">
+              <small>Where this page is hosted. Every marker points here, so pick an address you'll keep.</small>
+            </div>
+          </div>
+        </details>
+      </form>
+
+      <div class="sheet">
+        <div class="paper"><div class="marker" id="marker"></div></div>
+        <div class="readout">
+          <div><span class="label">Printed size</span><b id="rSize">–</b><em id="rMod"></em></div>
+          <div><span class="label">Data</span><b id="rData">–</b><em id="rDataSub"></em></div>
+          <div><span class="label">Match to file</span><b id="rAcc">–</b><em>largest curve difference from the original file, in 8-bit steps. Formula curves copy exactly; measured ones are resampled.</em></div>
+        </div>
+        <div class="actions">
+          <button class="primary" type="button" id="dlSvg">Download SVG</button>
+          <button type="button" id="copyLink">Copy link</button>
+          <a class="btn" id="openLink" target="_blank" rel="noopener">Test the link</a>
+          <span class="status" id="mStatus" role="status"></span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== shared readouts ===== -->
+  <section class="details" id="details">
+    <div class="panel plot">
+      <h2>Gamut and white point</h2>
+      <div id="gamut"></div>
+      <div class="legend"><span><i style="background:var(--accent)"></i>This display</span><span><i style="background:var(--muted)"></i>sRGB</span></div>
+    </div>
+    <div class="panel plot">
+      <h2>Video card correction</h2>
+      <div id="vcgtPlot"></div>
+      <div class="legend" id="vcgtLegend"><span><i style="background:var(--ch-r)"></i>Red</span><span><i style="background:var(--ch-g)"></i>Green</span><span><i style="background:var(--ch-b)"></i>Blue</span></div>
+    </div>
+    <div class="panel">
+      <h2>What the marker carries</h2>
+      <div class="spec-wrap"><table class="spec" id="spec"></table></div>
+    </div>
+  </section>
+
+  <footer>Matrix/shaper profiles only: primaries, white point, adaptation matrix, luminance, tone curves and video card (vcgt) curves. Everything runs in your browser; the link's data sits after the <span class="mono">#</span>, which browsers never send to the server. QR encoder by Kazuhiko Arase (MIT). Text stays put while fonts load thanks to <a href="https://github.com/Y2Z/invisible-ink">Invisible Ink</a>.</footer>
+</div>
+
+<script>/*QRLIB*/</script>
+<script>/*CORE*/</script>
+<script>/*APP*/</script>
+</body>
+</html>
