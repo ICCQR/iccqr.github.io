@@ -1,2 +1,3 @@
-# icqr
-ICC display calibration QR code stickers
+# ICCQR
+
+ICC display calibration QR code markers
