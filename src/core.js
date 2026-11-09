@@ -3,7 +3,10 @@
    [0] format=1  [1] flags  [2] icc major  [3] icc minor  [4..8] date: yy-2000,mm,dd,hh,mi
    wtpt rXYZ gXYZ bXYZ: 12 x int24 (s15Fixed16 raw)   [chad: 9 x int24]   [lumi Y*10: int24]
    TRC: 1 or 3 curves   [vcgt: formula or 1 or 3 curves]   strings: desc, model, note (u8 len + UTF-8)
-   flags: 1 chad, 2 lumi, 4 vcgt, 8 trcShared, 16 vcgtShared, 32 vcgtFormula
+   flags: 1 chad, 2 lumi, 4 vcgt, 8 trcShared, 16 vcgtShared, 32 vcgtFormula, 64 bkpt
+   extensions, after the strings, in flag order: [bkpt: 3 x int24 (s15Fixed16 raw)]
+     Decoders ignore trailing bytes they don't know, so new optional fields go here
+     and older decoders still read the rest of the marker.
    curve: u8 kind  0 identity | 1 gamma u16 (u8Fixed8) | 2 para u8 type + int24[n]
           | 3 sampled: u8 K, u16 outCount, u16 gamma*1000, then K zigzag varints: t0, t1-t0, then second differences;
             t = round(y^(1/gamma) * 65535) */
@@ -15,7 +18,15 @@ const ICCQR = (() => {
   const sigStr = n => String.fromCharCode((n >>> 24) & 255, (n >>> 16) & 255, (n >>> 8) & 255, n & 255);
 
   // ---------- parsing ----------
+  // Damaged files must fail with a message for people, not a RangeError from a DataView.
   function parseICC(buf) {
+    try { return readProfile(buf); }
+    catch (e) {
+      if (e instanceof RangeError || e instanceof TypeError) throw new Error('This profile file is damaged or incomplete, so it can\u2019t be read.');
+      throw e;
+    }
+  }
+  function readProfile(buf) {
     const dv = new DataView(buf instanceof ArrayBuffer ? buf : buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength));
     if (dv.byteLength < 132 || sigStr(dv.getUint32(36)) !== 'acsp') throw new Error('This file is not an ICC profile (no "acsp" signature).');
     if (sigStr(dv.getUint32(16)) !== 'RGB ') throw new Error('Only RGB display profiles can go on a marker. This profile uses the ' + sigStr(dv.getUint32(16)).trim() + ' color space.');
@@ -35,6 +46,7 @@ const ICCQR = (() => {
     p.wtpt = xyz('wtpt'); p.r = xyz('rXYZ'); p.g = xyz('gXYZ'); p.b = xyz('bXYZ');
     if (tags.chad && type('chad') === 'sf32') { const o = tags.chad.off + 8; p.chad = Array.from({ length: 9 }, (_, i) => dv.getInt32(o + i * 4)); }
     if (tags.lumi) p.lumiY = fx(xyz('lumi')[1]);
+    if (tags.bkpt && type('bkpt') === 'XYZ ') { const k = xyz('bkpt'); if (k.some(v => v !== 0)) p.bkpt = k; }
     p.trc = ['rTRC', 'gTRC', 'bTRC'].map(t => readCurve(dv, tags[t].off));
     if (tags.vcgt) p.vcgt = readVcgt(dv, tags.vcgt.off);
     p.desc = readText(dv, tags.desc) || '';
@@ -48,6 +60,7 @@ const ICCQR = (() => {
       const c = dv.getUint32(off + 8);
       if (c === 0) return { kind: 'identity' };
       if (c === 1) return { kind: 'gamma', raw: dv.getUint16(off + 12) };
+      if (off + 12 + c * 2 > dv.byteLength) throw new RangeError('curve runs past the end');
       const d = new Float64Array(c);
       for (let i = 0; i < c; i++) d[i] = dv.getUint16(off + 12 + i * 2) / 65535;
       return { kind: 'table', data: d };
@@ -63,6 +76,8 @@ const ICCQR = (() => {
     const k = dv.getUint32(off + 8);
     if (k === 1) return { kind: 'formula', vals: Array.from({ length: 9 }, (_, i) => dv.getInt32(off + 12 + i * 4)) };
     const ch = dv.getUint16(off + 12), cnt = dv.getUint16(off + 14), sz = dv.getUint16(off + 16);
+    if ((ch !== 1 && ch !== 3) || (sz !== 1 && sz !== 2) || cnt < 2 || off + 18 + ch * cnt * sz > dv.byteLength)
+      throw new Error('The video card curves (vcgt) in this profile are damaged or in a layout that isn\u2019t supported.');
     const max = sz === 1 ? 255 : 65535;
     const chans = [];
     for (let c = 0; c < ch; c++) {
@@ -85,6 +100,7 @@ const ICCQR = (() => {
       if (t === 'text') { let s = ''; for (let i = 8; i < tag.size; i++) { const b = dv.getUint8(o + i); if (!b) break; s += String.fromCharCode(b); } return s.trim(); }
       if (t === 'mluc') {
         const nrec = dv.getUint32(o + 8), rs = dv.getUint32(o + 12);
+        if (rs < 12 || nrec < 1 || 16 + nrec * rs > tag.size) return '';
         let pick = 0;
         for (let i = 0; i < nrec; i++) if (dv.getUint16(o + 16 + i * rs) === 0x656e) { pick = i; break; }
         const r = o + 16 + pick * rs, len = dv.getUint32(r + 4), so = dv.getUint32(r + 8);
@@ -214,7 +230,7 @@ const ICCQR = (() => {
       vcgt: vcgt && vcgt.kind === 'table' ? p.vcgt.ch.map((c, i) => curveError(c, vcgt.ch[i])) : [0, 0, 0],
     };
     return {
-      major: p.major, minor: p.minor, date: opts.date || p.date, wtpt: p.wtpt, r: p.r, g: p.g, b: p.b, chad: p.chad, lumiY: p.lumiY,
+      major: p.major, minor: p.minor, date: opts.date || p.date, wtpt: p.wtpt, r: p.r, g: p.g, b: p.b, chad: p.chad, lumiY: p.lumiY, bkpt: p.bkpt,
       trc, vcgt, desc: opts.desc ?? p.desc, model: opts.model ?? p.model, note: opts.note || '', err,
     };
   }
@@ -224,7 +240,7 @@ const ICCQR = (() => {
     const vF = s.vcgt && s.vcgt.kind === 'formula';
     const vShared = s.vcgt && !vF && sameCurve(s.vcgt.ch[0], s.vcgt.ch[1]) && sameCurve(s.vcgt.ch[0], s.vcgt.ch[2]);
     w.u8(1);
-    w.u8((s.chad ? 1 : 0) | (s.lumiY ? 2 : 0) | (s.vcgt ? 4 : 0) | (trcShared ? 8 : 0) | (vShared ? 16 : 0) | (vF ? 32 : 0));
+    w.u8((s.chad ? 1 : 0) | (s.lumiY ? 2 : 0) | (s.vcgt ? 4 : 0) | (trcShared ? 8 : 0) | (vShared ? 16 : 0) | (vF ? 32 : 0) | (s.bkpt ? 64 : 0));
     w.u8(s.major); w.u8(s.minor);
     const d = s.date || { y: 2000, mo: 1, d: 1, h: 0, mi: 0 };
     [d.y - 2000, d.mo, d.d, d.h, d.mi].forEach(v => w.u8(v));
@@ -235,6 +251,7 @@ const ICCQR = (() => {
     if (vF) s.vcgt.vals.forEach(v => w.i24(v));
     else if (s.vcgt) (vShared ? [s.vcgt.ch[0]] : s.vcgt.ch).forEach(c => writeCurve(w, c));
     w.str(s.desc); w.str(s.model); w.str(s.note);
+    if (s.bkpt) s.bkpt.forEach(v => w.i24(v));
     return w.bytes();
   }
   function unpack(bytes) {
@@ -250,6 +267,7 @@ const ICCQR = (() => {
     if (f & 32) s.vcgt = { kind: 'formula', vals: Array.from({ length: 9 }, () => r.i24()) };
     else if (f & 4) { if (f & 16) { const c = readCurveP(r); s.vcgt = { kind: 'table', ch: [c, c, c] }; } else s.vcgt = { kind: 'table', ch: [readCurveP(r), readCurveP(r), readCurveP(r)] }; }
     s.desc = r.str(); s.model = r.str(); s.note = r.str();
+    if (f & 64) s.bkpt = Array.from({ length: 3 }, () => r.i24());
     return s;
   }
 
@@ -288,11 +306,11 @@ const ICCQR = (() => {
       const o = B();
       if (v4) {
         o.sig('mluc'); o.u32(0); o.u32(1); o.u32(12); o.sig('en'); o.sig('US'); o.u32(str.length * 2); o.u32(28);
-        for (const ch of str) { const c = ch.charCodeAt(0); o.u16(c > 0xffff ? 0x3f : c); }
+        for (let i = 0; i < str.length; i++) o.u16(str.charCodeAt(i)); // UTF-16BE, surrogate pairs intact
       } else {
         const ascii = str.replace(/[^\x20-\x7e]/g, '?');
         o.sig('desc'); o.u32(0); o.u32(ascii.length + 1); [...ascii].forEach(c => o.u8(c.charCodeAt(0))); o.u8(0);
-        o.u32(0); o.u32(str.length + 1); for (const ch of str) { const c = ch.charCodeAt(0); o.u16(c > 0xffff ? 0x3f : c); } o.u16(0);
+        o.u32(0); o.u32(str.length + 1); for (let i = 0; i < str.length; i++) o.u16(str.charCodeAt(i)); o.u16(0);
         o.u16(0); o.u8(0); for (let i = 0; i < 67; i++) o.u8(0);
       }
       return o.a;
@@ -329,6 +347,7 @@ const ICCQR = (() => {
     const shared = JSON.stringify(curveKey(s.trc[0])) === JSON.stringify(curveKey(s.trc[1])) && JSON.stringify(curveKey(s.trc[0])) === JSON.stringify(curveKey(s.trc[2]));
     tags.push(['rTRC', t0], ['gTRC', shared ? 'rTRC' : curveTag(s.trc[1])], ['bTRC', shared ? 'rTRC' : curveTag(s.trc[2])]);
     if (s.chad) { const o = B(); o.sig('sf32'); o.u32(0); s.chad.forEach(x => o.u32(x >>> 0)); tags.push(['chad', o.a]); }
+    if (s.bkpt) tags.push(['bkpt', xyzTag(s.bkpt)]);
     if (s.lumiY) { const k = s.lumiY / fx(s.wtpt[1]); tags.push(['lumi', xyzTag(s.wtpt.map(x => Math.round(fx(x) * k * 65536)))]); }
     if (s.vcgt) tags.push(['vcgt', vcgtTag(s.vcgt)]);
     if (s.model) tags.push(['dmdd', textTag(s.model)]);
@@ -387,6 +406,19 @@ const ICCQR = (() => {
       case 'formula': return 'formula';
     }
   }
+  // Black relative to white. The measured black point wins; otherwise the tone curves'
+  // output at input 0. Returns null when the profile records no black above zero.
+  function blackLevel(s) {
+    let rel = 0, source = null;
+    if (s.bkpt && s.bkpt[1] > 0 && s.wtpt[1] > 0) { rel = s.bkpt[1] / s.wtpt[1]; source = 'measured'; }
+    else {
+      const Y = [s.r, s.g, s.b].map(v => fx(v[1])), white = Y[0] + Y[1] + Y[2];
+      const black = Y.reduce((a, y, i) => a + y * evalCurve(s.trc[i], 0), 0);
+      if (black > 0 && white > 0) { rel = black / white; source = 'curves'; }
+    }
+    if (!(rel > 0 && rel < 0.5)) return null;
+    return { rel, source, cdm2: s.lumiY ? s.lumiY * rel : null, contrast: 1 / rel };
+  }
   function effectiveGamma(c) { const y = evalCurve(c, 0.5); return y > 0 && y < 1 ? Math.log(y) / Math.log(0.5) : null; }
 
   // ---------- example profile (shown before a file is chosen) ----------
@@ -401,7 +433,7 @@ const ICCQR = (() => {
     const tbl = (n, f) => ({ kind: 'samples', s: Float64Array.from({ length: n }, (_, i) => f(i / (n - 1))), outN: n });
     const s = {
       major: 2, minor: 0x40, date: { y: 2026, mo: 11, d: 8, h: 9, mi: 42 },
-      wtpt: D50.map(toFix), r: col(0), g: col(1), b: col(2), chad: A.map(toFix), lumiY: 119.6,
+      wtpt: D50.map(toFix), r: col(0), g: col(1), b: col(2), chad: A.map(toFix), lumiY: 119.6, bkpt: D50.map(v => toFix(v * 0.00109)),
       trc: [2.214, 2.196, 2.231].map((g, k) => tbl(1024, x => Math.pow(x, g) * (1 - 0.0012) + 0.0012 * x * (1 + 0.15 * Math.sin(k + x * 3)))),
       vcgt: { kind: 'table', ch: [[0.982, 0.006], [0.994, -0.004], [0.971, 0.011]].map(([m, w]) => tbl(256, x => Math.min(1, x * m + w * Math.sin(Math.PI * x) * x))) },
       desc: 'Studio left', model: '',
@@ -409,6 +441,6 @@ const ICCQR = (() => {
     return buildICC(s);
   }
 
-  return { parseICC, compact, encode, decode, buildICC, chromaticities, cct, describeCurve, effectiveGamma, evalCurve, exampleICC, fx, b32enc, b32dec, pack, unpack };
+  return { parseICC, compact, encode, decode, buildICC, chromaticities, blackLevel, cct, describeCurve, effectiveGamma, evalCurve, exampleICC, fx, b32enc, b32dec, pack, unpack };
 })();
 if (typeof module !== 'undefined') module.exports = ICCQR;

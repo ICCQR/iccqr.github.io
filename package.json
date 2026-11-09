@@ -6,10 +6,10 @@
   "homepage": "https://iccqr.github.io/",
   "scripts": {
     "build": "node scripts/build.js",
-    "test": "node --test test/core.test.js"
+    "test": "node --test test/core.test.js test/fuzz.test.js"
   },
   "engines": {
-    "node": ">=18.11"
+    "node": ">=20.12"
   },
   "devDependencies": {
     "@fontsource-variable/archivo": "5.3.0",

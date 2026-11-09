@@ -3,6 +3,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');
+const zlib = require('zlib');
 const path = require('path');
 const ICCQR = require('../src/core.js');
 
@@ -26,6 +27,42 @@ function assertWellFormed(bytes) {
   }
 }
 
+// Reads an XYZType tag straight from the file, without going through src/core.js.
+function readXYZTag(bytes, sig) {
+  const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  for (let i = 0; i < dv.getUint32(128); i++) {
+    const e = 132 + i * 12;
+    if (String.fromCharCode(...bytes.slice(e, e + 4)) === sig) {
+      const off = dv.getUint32(e + 4);
+      return [0, 1, 2].map(k => dv.getInt32(off + 8 + k * 4));
+    }
+  }
+  return null;
+}
+
+// Adds an XYZType tag to a profile, without going through src/core.js.
+function withXYZTag(bytes, sig, xyz) {
+  const src = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const n = src.getUint32(128), body = bytes.length - (132 + n * 12);
+  const size = 132 + (n + 1) * 12 + body + 20;
+  const out = new Uint8Array(size), dv = new DataView(out.buffer);
+  out.set(bytes.slice(0, 128));
+  dv.setUint32(0, size);
+  dv.setUint32(128, n + 1);
+  for (let i = 0; i < n; i++) {
+    const e = 132 + i * 12;
+    out.set(bytes.slice(e, e + 12), e);
+    dv.setUint32(e + 4, src.getUint32(e + 4) + 12);
+  }
+  out.set(bytes.slice(132 + n * 12), 132 + (n + 1) * 12);
+  const e = 132 + n * 12, off = size - 20;
+  [...sig].forEach((c, i) => { out[e + i] = c.charCodeAt(0); });
+  dv.setUint32(e + 4, off); dv.setUint32(e + 8, 20);
+  [...'XYZ '].forEach((c, i) => { out[off + i] = c.charCodeAt(0); });
+  xyz.forEach((v, k) => dv.setInt32(off + 8 + k * 4, v));
+  return out;
+}
+
 for (const [name, buf] of profiles) {
   test(`round trip: ${name}`, async () => {
     const parsed = ICCQR.parseICC(buf);
@@ -34,7 +71,7 @@ for (const [name, buf] of profiles) {
     assert.match(text, /^[A-Z2-7]+$/, 'payload uses only QR alphanumeric characters');
 
     const decoded = await ICCQR.decode(text);
-    for (const k of ['wtpt', 'r', 'g', 'b', 'chad']) assert.deepEqual(decoded[k], parsed[k], k);
+    for (const k of ['wtpt', 'r', 'g', 'b', 'chad', 'bkpt']) assert.deepEqual(decoded[k], parsed[k], k);
     assert.equal(decoded.note, 'Brightness 35');
     assert.equal(decoded.desc, parsed.desc);
 
@@ -72,4 +109,62 @@ test('rejects files that are not ICC profiles', () => {
 
 test('reports a damaged link instead of crashing', async () => {
   await assert.rejects(ICCQR.decode('AAAAAAAAAAAA'), /damaged or incomplete/);
+});
+
+test('carries a measured black point into the rebuilt profile', async () => {
+  const src = fs.readFileSync(path.join(__dirname, 'profiles', 'littlecms-srgb.icc'));
+  const black = [32, 33, 27]; // about 0.05% of a D50 white
+  const parsed = ICCQR.parseICC(ab(withXYZTag(src, 'bkpt', black)));
+  assert.deepEqual(parsed.bkpt, black);
+
+  const decoded = await ICCQR.decode((await ICCQR.encode(ICCQR.compact(parsed, {}))).text);
+  assert.deepEqual(decoded.bkpt, black);
+  const rebuilt = ICCQR.buildICC(decoded);
+  assertWellFormed(rebuilt);
+  assert.deepEqual(readXYZTag(rebuilt, 'bkpt'), black);
+
+  const level = ICCQR.blackLevel(decoded);
+  assert.equal(level.source, 'measured');
+  assert.ok(Math.abs(level.contrast - decoded.wtpt[1] / 33) < 1e-6, `contrast ${level.contrast}`);
+});
+
+test('works out black from the tone curves when there is no black point', () => {
+  const s = ICCQR.parseICC(ab(ICCQR.exampleICC()));
+  delete s.bkpt;
+  s.lumiY = 100;
+  // ICC parametric type 2: Y = (aX + b)^g + c, so the curve starts at c
+  const c = 66;
+  s.trc = [0, 1, 2].map(() => ({ kind: 'para', type: 2, params: [Math.round(2.2 * 65536), 65536, 0, c] }));
+  const level = ICCQR.blackLevel(s);
+  assert.equal(level.source, 'curves');
+  assert.ok(Math.abs(level.rel - c / 65536) < 1e-9, `relative black ${level.rel}`);
+  assert.ok(Math.abs(level.cdm2 - 100 * c / 65536) < 1e-9);
+});
+
+test('reports no black level when the profile records none', () => {
+  const s = ICCQR.parseICC(ab(fs.readFileSync(path.join(__dirname, 'profiles', 'littlecms-srgb.icc'))));
+  assert.equal(s.bkpt, undefined);
+  assert.equal(ICCQR.blackLevel(s), null);
+});
+
+test('markers without a black point are encoded exactly as before', async () => {
+  const text = fs.readFileSync(path.join(__dirname, 'golden-v1.txt'), 'utf8').trim();
+  const raw = zlib.inflateRawSync(Buffer.from(ICCQR.b32dec(text)));
+  assert.equal(raw[1] & 64, 0);
+  assert.deepEqual(Buffer.from(ICCQR.pack(ICCQR.unpack(raw))), raw);
+});
+
+test('decoders that predate the black point still read the rest of the marker', () => {
+  const src = fs.readFileSync(path.join(__dirname, 'profiles', 'littlecms-srgb.icc'));
+  const record = ICCQR.compact(ICCQR.parseICC(ab(withXYZTag(src, 'bkpt', [32, 33, 27]))), { note: 'Brightness 35' });
+  const withBlack = ICCQR.pack(record);
+  const without = ICCQR.pack({ ...record, bkpt: undefined });
+  assert.deepEqual(withBlack.slice(2, -9), without.slice(2), 'the black point is only appended');
+
+  // An older decoder doesn't know flag 64 and stops reading after the note.
+  const old = Uint8Array.from(withBlack); old[1] &= ~64;
+  const seen = ICCQR.unpack(old);
+  assert.equal(seen.note, 'Brightness 35');
+  assert.deepEqual(seen.wtpt, record.wtpt);
+  assert.equal(seen.bkpt, undefined);
 });

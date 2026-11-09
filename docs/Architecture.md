@@ -25,7 +25,9 @@ The whole tool is one static page. There is no server-side code and nothing is u
 | `src/icons/` | Favicon (32 px) and home-screen icon (180 px), made from the organization logo. |
 | `scripts/build.js` | Assembles `index.html` from the files above. |
 | `scripts/glyphs.py` | Regenerates `src/glyphs.json`. Only needed when the title text or its fonts change. |
-| `test/core.test.js` | Round trips, file-structure checks, and the compatibility test for printed markers. |
+| `test/core.test.js` | Round trips, file-structure checks, and the compatibility tests for printed markers. |
+| `test/fuzz.test.js` | Feeds the decoders random and damaged links, marker bytes and profile files. |
+| `.github/workflows/test.yml` | Runs the tests on Node 20.12 and 22 for every push and pull request, and checks that `index.html` matches the source. |
 | `test/golden-v1.txt` | A marker payload from the first release. Must always decode. |
 | `test/profiles/` | Extra `.icc` files to round-trip. Drop real calibration profiles here. |
 
@@ -58,7 +60,7 @@ Base32 is chosen because its alphabet is a subset of the QR *alphanumeric* mode,
 | Field | Size | Notes |
 |---|---|---|
 | format | u8 | `1`. A future format bumps this; decoders reject numbers they don't know with a clear message. |
-| flags | u8 | `1` chad present · `2` lumi present · `4` vcgt present · `8` one tone curve shared by R, G, B · `16` one vcgt curve shared · `32` vcgt is a formula. Bits 64 and 128 are reserved and must be 0. |
+| flags | u8 | `1` chad present · `2` lumi present · `4` vcgt present · `8` one tone curve shared by R, G, B · `16` one vcgt curve shared · `32` vcgt is a formula · `64` black point present (an extension, see below). Bit 128 is reserved and must be 0. |
 | ICC version | u8, u8 | Major and minor byte of the source profile. The rebuilt profile uses the same version. |
 | date | 5 × u8 | Year − 2000, month, day, hour, minute. Year range is 2000–2255. |
 | wtpt, rXYZ, gXYZ, bXYZ | 12 × int24 | Raw s15Fixed16 values from the profile, copied exactly. |
@@ -71,6 +73,16 @@ Base32 is chosen because its alphabet is a subset of the QR *alphanumeric* mode,
 | note | string | Printed on the marker. The page limits it to 36 characters. |
 
 A string is a u8 byte length followed by that many bytes of UTF-8 (cut at 255 bytes on a character boundary).
+
+### Extensions
+
+Optional fields added after the first release go **after the note**, in the order of their flag bits. A decoder reads the extensions it knows and ignores any bytes after them. That keeps changes compatible in both directions: new decoders read old markers (the flag is 0, nothing follows), and decoders from before an extension still read everything else in a newer marker.
+
+| Flag | Field | Size | Notes |
+|---|---|---|---|
+| 64 | bkpt | 3 × int24 | The profile's measured black point (`bkpt` tag), raw s15Fixed16, copied exactly. Left out when the profile has none or it is all zeros. |
+
+Adding an extension this way keeps the format at version 1. Bump the format byte only for a change that older decoders would misread.
 
 ### Curves
 
@@ -103,7 +115,7 @@ LUT tags (`A2B*`, `B2A*`), measurement and metadata tags, and the profile ID. Pr
 - `desc` (a v2 `desc` with an ASCII and a Unicode part, or a v4 `mluc`), and a `cprt` saying it was rebuilt from a marker.
 - `wtpt`, `rXYZ`, `gXYZ`, `bXYZ`, and `chad` when present, all copied exactly.
 - `rTRC`, `gTRC`, `bTRC`. When all three are identical they share one tag. Sampled curves are written back at their original table length.
-- `lumi`, when present.
+- `lumi` and `bkpt`, when present.
 - `vcgt`: a formula stays a formula. Curves are written as a 3-channel, 16-bit table with at least 256 and at most 1024 entries.
 
 Tags are 4-byte aligned and the header size matches the file length. The tests check this for every profile.
@@ -128,7 +140,18 @@ Tags are 4-byte aligned and the header size matches the file length. The tests c
 
 The title and date are drawn as outlines from `src/glyphs.json`, so the marker looks the same in any browser, editor or print shop. Only the note is live text, in a monospace font stack, squeezed with `textLength` if a fallback font runs wide.
 
+**Black level and contrast ratio.** `blackLevel()` gives black relative to white from the measured black point when the profile has one, or else from the tone curves' output at input 0, weighted by the primaries' luminance. With the white luminance (`lumi`) it also gives black in cd/m²; the contrast ratio needs only the relative value. A value worked out from the tone curves is labeled as such. Profiles that draw their curves down to zero and record no black point show "not recorded".
+
 **Charts.** The gamut chart draws the CIE 1931 spectral locus (400–700 nm, 5 nm steps) as a Catmull-Rom spline closed by the line of purples, with the display's primaries and white point and sRGB for reference. Chromaticities come from the profile's primaries with D50 adaptation undone (through `chad` when present, Bradford otherwise for v2). The video card chart plots each channel's correction as output minus input, in 8-bit steps.
+
+## Tests
+
+`npm test` runs both test files with Node's built-in test runner, so there are no test dependencies.
+
+- **`core.test.js`** round-trips every profile in `test/profiles/` and checks the rebuilt files' structure the way a strict ICC reader would. It also holds the compatibility tests: `golden-v1.txt` must decode and re-encode to the same bytes, and markers with extensions must stay readable by decoders that don't know them.
+- **`fuzz.test.js`** throws random and damaged input at `decode()`, `unpack()` and `parseICC()`, using the test profiles as seeds. Anything that fails must throw a plain `Error` with a message meant for people, never a `TypeError` or `RangeError`. Nothing may take longer than half a second. Anything that does decode must rebuild into a well-formed profile that reads back. A fourth target round-trips profile names and notes in many scripts, including emoji and other characters outside the Basic Multilingual Plane. Runs are reproducible: `FUZZ_SEED` picks the seed (printed in each test's name) and `FUZZ_RUNS` the number of cases.
+
+`parseICC()` turns any `RangeError` or `TypeError` from reading a damaged file into "This profile file is damaged or incomplete", and checks table sizes against the file length before allocating, so a bad count can't make it allocate gigabytes or loop for minutes.
 
 ## Rules for changing things
 
