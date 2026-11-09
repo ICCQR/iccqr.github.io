@@ -69,13 +69,15 @@
       <text x="${X(1)}" y="${T + 8}" text-anchor="end">output − input, 8-bit steps</text></svg>`;
   }
   function specRows(s, extra) {
-    const c = ICCQR.chromaticities(s);
+    const c = ICCQR.chromaticities(s), blk = ICCQR.blackLevel(s);
     const f = p => `${p[0].toFixed(4)}, ${p[1].toFixed(4)}`;
     const gam = s.trc.map(t => ICCQR.effectiveGamma(t)).map(g => g ? g.toFixed(2) : '–').join(' / ');
     const v = s.vcgt ? (s.vcgt.kind === 'formula' ? 'formula (gamma, min, max)' : ICCQR.describeCurve(s.vcgt.ch[0])) : 'none';
     const rows = [
       ['White point', `${f(c.w)} · ${Math.round(ICCQR.cct(c.w))} K`],
-      ['Luminance', s.lumiY ? `${s.lumiY.toFixed(1)} cd/m²` : 'not recorded'],
+      ['White luminance', s.lumiY ? `${s.lumiY.toFixed(1)} cd/m²` : 'not recorded'],
+      ['Black level', blk ? `${blk.cdm2 ? `${blk.cdm2.toPrecision(2)} cd/m²` : `${(blk.rel * 100).toPrecision(2)}% of white`}${blk.source === 'curves' ? ' (from tone curves)' : ''}` : 'not recorded'],
+      ['Contrast ratio', blk ? `${Math.round(blk.contrast).toLocaleString('en-US')}:1` : 'not recorded'],
       ['Red primary', f(c.r)], ['Green primary', f(c.g)], ['Blue primary', f(c.b)],
       ['Tone curves', `${ICCQR.describeCurve(s.trc[0])} · gamma at 50%: ${gam}`],
       ['Video card curves', v],

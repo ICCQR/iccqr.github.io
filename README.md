@@ -15,10 +15,10 @@ Everything runs in the browser. Profiles are never uploaded, and the calibration
 ```sh
 npm ci          # installs the exact versions in package-lock.json
 npm run build   # writes index.html
-npm test        # checks the codec, including that old markers still decode
+npm test        # checks the codec, that old markers still decode, and fuzzes the decoders
 ```
 
-Needs Node.js 18.11 or newer. Commit `index.html` together with the source change.
+Needs Node.js 20.12 or newer. Commit `index.html` together with the source change; the GitHub Action fails if they don't match.
 
 The marker title and date digits are pre-drawn outlines in `src/glyphs.json`. To change the title text or its fonts, regenerate them (needs Python 3):
 
@@ -30,7 +30,13 @@ npm run build
 
 ## Testing with your own profiles
 
-Put `.icc` or `.icm` files in `test/profiles/` and run `npm test`. Each one is encoded, decoded, rebuilt and checked.
+Put `.icc` or `.icm` files in `test/profiles/` and run `npm test`. Each one is encoded, decoded, rebuilt and checked, and the fuzz test uses them as seeds for damaged files.
+
+The fuzz test is reproducible. To run it longer or with another seed:
+
+```sh
+FUZZ_SEED=42 FUZZ_RUNS=5000 node --test test/fuzz.test.js
+```
 
 ## How it works
 
