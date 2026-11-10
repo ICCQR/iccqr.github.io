@@ -8,6 +8,12 @@ When you recalibrate, print a new marker and stick it on top of the old one. The
 
 Everything runs in the browser. Profiles are never uploaded, and the calibration data sits after the `#` in the link, which browsers don't send to the server.
 
+This repository is the website. Markers are made and read by the [iccqr](https://github.com/iccqr/iccqr) package, which also has a command-line tool:
+
+```sh
+npx iccqr make studio.icc --note "Brightness 35 · Contrast 75"
+```
+
 ## Rebuilding the site
 
 `index.html` is generated. Edit the files in `src/`, then rebuild:
@@ -15,33 +21,23 @@ Everything runs in the browser. Profiles are never uploaded, and the calibration
 ```sh
 npm ci          # installs the exact versions in package-lock.json
 npm run build   # writes index.html
-npm test        # checks the codec, that old markers still decode, and fuzzes the decoders
 ```
 
 Needs Node.js 20.12 or newer. Commit `index.html` together with the source change; the GitHub Action fails if they don't match.
 
-The marker title and date digits are pre-drawn outlines in `src/glyphs.json`. To change the title text or its fonts, regenerate them (needs Python 3):
+To move to a new release of the iccqr package:
 
 ```sh
-pip install fonttools brotli
-python3 scripts/glyphs.py
+npm install --save-exact iccqr@<version>
 npm run build
 ```
 
-## Testing with your own profiles
-
-Put `.icc` or `.icm` files in `test/profiles/` and run `npm test`. Each one is encoded, decoded, rebuilt and checked, and the fuzz test uses them as seeds for damaged files.
-
-The fuzz test is reproducible. To run it longer or with another seed:
-
-```sh
-FUZZ_SEED=42 FUZZ_RUNS=5000 node --test test/fuzz.test.js
-```
+Commit `package.json`, `package-lock.json` and `index.html` together.
 
 ## How it works
 
-See [docs/Architecture.md](docs/Architecture.md) for the marker format, the build, and the rules that keep printed markers working.
+See [docs/Architecture.md](docs/Architecture.md) for the site, and the package's [FORMAT.md](https://github.com/iccqr/iccqr/blob/main/FORMAT.md) for the marker format.
 
 ## Licenses
 
-ICCQR's own code is yours to license. It bundles qrcode-generator by Kazuhiko Arase (MIT) and the Archivo, IBM Plex Sans and IBM Plex Mono fonts (SIL Open Font License 1.1, texts in `fonts/`). Font placeholders are made with [Invisible Ink](https://github.com/Y2Z/invisible-ink).
+The site bundles the iccqr package (0BSD), which includes qrcode-generator by Kazuhiko Arase (MIT), and the Archivo, IBM Plex Sans and IBM Plex Mono fonts (SIL Open Font License 1.1, texts in `fonts/`). Font placeholders are made with [Invisible Ink](https://github.com/Y2Z/invisible-ink).

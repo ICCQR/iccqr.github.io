@@ -1,14 +1,12 @@
 (() => {
   const $ = id => document.getElementById(id);
   const fx = ICCQR.fx;
-  const pad = n => String(n).padStart(2, '0');
-  const dateText = d => d ? `${d.y}-${pad(d.mo)}-${pad(d.d)}` : 'undated';
+  const dateText = ICCQR.formatDate;
   const store = { get(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }, set(k, v) { try { localStorage.setItem(k, v); } catch (e) { /* storage off */ } } };
   const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
   const hosted = /^https?:$/.test(location.protocol) && !/claude\.ai|claudeusercontent/.test(location.hostname);
   const here = hosted ? location.origin + location.pathname : '';
-  const PLACEHOLDER = 'https://iccqr.github.io/';
 
   function saveFile(bytes, name, type) {
     const url = URL.createObjectURL(new Blob([bytes], { type }));
@@ -19,7 +17,6 @@
     try { await navigator.clipboard.writeText(text); statusEl.textContent = 'Link copied.'; }
     catch (e) { if (box) { box.hidden = false; box.value = text; box.select(); } statusEl.textContent = 'Copy was blocked. The link is selected below; copy it yourself.'; }
   }
-  const slug = s => (s || '').normalize('NFKD').replace(/[^\w\- ]+/g, '').trim().replace(/\s+/g, '-').slice(0, 40) || 'display';
 
   // ---------- plots ----------
   // CIE 1931 2° spectral locus, 400–700 nm in 5 nm steps
@@ -69,23 +66,7 @@
       <text x="${X(1)}" y="${T + 8}" text-anchor="end">output − input, 8-bit steps</text></svg>`;
   }
   function specRows(s, extra) {
-    const c = ICCQR.chromaticities(s), blk = ICCQR.blackLevel(s);
-    const f = p => `${p[0].toFixed(4)}, ${p[1].toFixed(4)}`;
-    const gam = s.trc.map(t => ICCQR.effectiveGamma(t)).map(g => g ? g.toFixed(2) : '–').join(' / ');
-    const v = s.vcgt ? (s.vcgt.kind === 'formula' ? 'formula (gamma, min, max)' : ICCQR.describeCurve(s.vcgt.ch[0])) : 'none';
-    const rows = [
-      ['White point', `${f(c.w)} · ${Math.round(ICCQR.cct(c.w))} K`],
-      ['White luminance', s.lumiY ? `${s.lumiY.toFixed(1)} cd/m²` : 'not recorded'],
-      ['Black level', blk ? `${blk.cdm2 ? `${blk.cdm2.toPrecision(2)} cd/m²` : `${(blk.rel * 100).toPrecision(2)}% of white`}${blk.source === 'curves' ? ' (from tone curves)' : ''}` : 'not recorded'],
-      ['Contrast ratio', blk ? `${Math.round(blk.contrast).toLocaleString('en-US')}:1` : 'not recorded'],
-      ['Red primary', f(c.r)], ['Green primary', f(c.g)], ['Blue primary', f(c.b)],
-      ['Tone curves', `${ICCQR.describeCurve(s.trc[0])} · gamma at 50%: ${gam}`],
-      ['Video card curves', v],
-      ['Adaptation matrix', s.chad ? 'included' : 'none'],
-      ['ICC version', `${s.major}.${(s.minor >> 4)}`],
-      ...(extra || []),
-    ];
-    return rows.map(([k, val]) => `<tr><th>${esc(k)}</th><td>${esc(val)}</td></tr>`).join('');
+    return [...ICCQR.summarize(s), ...(extra || [])].map(([k, val]) => `<tr><th>${esc(k)}</th><td>${esc(val)}</td></tr>`).join('');
   }
   function showDetails(s, extra) {
     $('gamut').innerHTML = gamutSVG(ICCQR.chromaticities(s));
@@ -94,46 +75,10 @@
     $('spec').innerHTML = specRows(s, extra);
   }
 
-  // ---------- marker ----------
-  const GLYPHS = __GLYPHS__;
-  const NOTE_MAX = 36;
-  function markerSVG(qr, o) {
-    const n = qr.getModuleCount(), q = 4, W = n + 2 * q, side = 3;
-    // title: outlined "ICCQR Calibration Marker", so it prints the same everywhere
-    // title ink spans exactly the width of the code below it
-    const T = GLYPHS.title, ts = n / (T.x1 - T.x0), tx = q - T.x0 * ts, yT = side + T.cap * ts;
-    const y0 = yT + 3.5;
-    let d = '';
-    for (let r = 0; r < n; r++) {
-      let c = 0;
-      while (c < n) {
-        if (qr.isDark(r, c)) { let e = c; while (e < n && qr.isDark(r, e)) e++; d += `M${c + q} ${(r + y0).toFixed(2)}h${e - c}v1h${c - e}z`; c = e; } else c++;
-      }
-    }
-    // date: outlined IBM Plex Mono Bold digits
-    const Mo = GLYPHS.mono, dh = W * 0.07, ds = dh / Mo.cap, adv = Mo.adv * ds;
-    const dx0 = (W - o.date.length * adv) / 2, y1 = y0 + n + 3 + dh;
-    const date = [...o.date].map((ch, i) => Mo.g[ch] ? `<path transform="translate(${(dx0 + i * adv).toFixed(2)} ${y1.toFixed(2)}) scale(${ds.toFixed(5)})" d="${Mo.g[ch]}"/>` : '').join('');
-    const mono = `'IBM Plex Mono','DejaVu Sans Mono',Menlo,Consolas,monospace`;
-    let note = '', H = y1 + side;
-    if (o.note) {
-      const avail = W - 2 * side, f = Math.min(W * 0.042, avail / (NOTE_MAX * 0.6)), est = o.note.length * f * 0.6;
-      const y2 = y1 + f * 2;
-      note = `<text x="${W / 2}" y="${y2.toFixed(2)}" text-anchor="middle" font-family="${mono}" font-size="${f.toFixed(2)}"${est > avail ? ` textLength="${avail.toFixed(2)}" lengthAdjust="spacingAndGlyphs"` : ''} fill="#000">${esc(o.note)}</text>`;
-      H = y2 + side;
-    }
-    const mm = o.mm;
-    return `<svg xmlns="http://www.w3.org/2000/svg" width="${(W * mm).toFixed(2)}mm" height="${(H * mm).toFixed(2)}mm" viewBox="0 0 ${W} ${H.toFixed(2)}">
-<title>ICCQR Calibration Marker ${esc(o.date)}</title>
-<rect x="0.1" y="0.1" width="${W - 0.2}" height="${(H - 0.2).toFixed(2)}" rx="2.2" fill="#fff" stroke="#c8c8c8" stroke-width="0.2"/>
-<path transform="translate(${tx.toFixed(3)} ${yT.toFixed(2)}) scale(${ts.toFixed(6)})" d="${T.d}" fill="#000"/>
-<path d="${d}" fill="#000" shape-rendering="crispEdges"/>
-<g fill="#000">${date}</g>${note}
-</svg>`;
-  }
+  const NOTE_MAX = ICCQR.NOTE_MAX;
 
   // ---------- maker ----------
-  const M = { p: null, buf: null, name: '', example: true, svg: '', url: '', date: null };
+  const M = { p: null, buf: null, name: '', example: true, svg: '', url: '', fileName: '' };
   const val = name => document.querySelector(`input[name=${name}]:checked`).value;
 
   function loadProfile(buf, name, example) {
@@ -146,7 +91,6 @@
     $('desc').value = p.desc || '';
     if (example) $('note').value = 'Brightness 35 · Contrast 75 · Custom';
     else $('note').value = '';
-    M.date = p.date || null;
     $('date').value = p.date ? dateText(p.date) : new Date().toISOString().slice(0, 10);
     render();
     return true;
@@ -157,40 +101,29 @@
   async function render() {
     if (!M.p) return;
     const my = ++seq;
-    const [y, mo, d] = ($('date').value || '').split('-').map(Number);
-    const date = y ? { y, mo, d, h: M.date ? M.date.h : 12, mi: M.date ? M.date.mi : 0 } : M.date;
-    if (date && (date.y < 2000 || date.y > 2255)) { showErr('Choose a calibration date between 2000 and 2255.'); return; }
-    const s = ICCQR.compact(M.p, { samples: +val('samples'), desc: $('desc').value.trim(), model: '', note: $('note').value.trim().slice(0, NOTE_MAX), date });
-    let enc;
-    try { enc = await ICCQR.encode(s); } catch (e) { showErr(e.message); return; }
-    if (my !== seq) return;
-    let base = ($('base').value.trim() || here || PLACEHOLDER);
-    try { base = new URL(base).href.split('#')[0]; } catch (e) { showErr('The decoder address isn’t a valid web address.'); return; }
-    const ecc = val('ecc');
-    let qr;
+    let m;
     try {
-      qr = qrcode(0, ecc);
-      qr.addData(base + '#', 'Byte');
-      qr.addData(enc.text, 'Alphanumeric');
-      qr.make();
-    } catch (e) { showErr('This is more data than one QR code holds. Use fewer curve points, shorten the note, or lower the error correction.'); return; }
-    const mm = Math.min(2, Math.max(0.3, +$('mm').value || 0.5));
-    const n = qr.getModuleCount();
-    M.url = base + '#' + enc.text;
-    M.svg = markerSVG(qr, { date: dateText(date), note: s.note, mm });
-    M.date8 = dateText(date);
-    $('marker').innerHTML = M.svg;
-    const vb = M.svg.match(/viewBox="0 0 ([\d.]+) ([\d.]+)"/);
-    $('rSize').textContent = `${(vb[1] * mm).toFixed(0)} × ${(vb[2] * mm).toFixed(0)} mm`;
-    $('rMod').textContent = `version ${(n - 17) / 4}, ${n}×${n} modules at ${mm} mm`;
-    $('rData').textContent = `${enc.z.length} bytes`;
-    $('rDataSub').textContent = `${enc.text.length} characters, level ${ecc}`;
-    const errs = [...s.err.trc, ...s.err.vcgt];
-    const worst = Math.max(...errs);
-    $('rAcc').textContent = worst < 0.0005 ? 'exact' : `${worst.toFixed(2)} step${worst >= 1.995 ? 's' : ''}`;
-    $('openLink').href = M.url;
+      m = await ICCQR.makeMarker(M.p, {
+        note: $('note').value.trim(),
+        name: $('desc').value,
+        date: $('date').value, // empty: the profile's own date
+        samples: +val('samples'),
+        ecc: val('ecc'),
+        moduleMm: Math.min(2, Math.max(0.3, +$('mm').value || 0.5)),
+        base: $('base').value.trim() || here || ICCQR.DEFAULT_BASE,
+      });
+    } catch (e) { if (my === seq) showErr(e.message); return; }
+    if (my !== seq) return;
+    Object.assign(M, { url: m.url, svg: m.svg, fileName: m.fileName });
+    $('marker').innerHTML = m.svg;
+    $('rSize').textContent = `${m.size.widthMm.toFixed(0)} × ${m.size.heightMm.toFixed(0)} mm`;
+    $('rMod').textContent = `version ${m.qr.version}, ${m.qr.modules}×${m.qr.modules} modules at ${Math.min(2, Math.max(0.3, +$('mm').value || 0.5))} mm`;
+    $('rData').textContent = `${m.dataBytes} bytes`;
+    $('rDataSub').textContent = `${m.payload.length} characters, level ${m.qr.ecc}`;
+    $('rAcc').textContent = m.match < 0.0005 ? 'exact' : `${m.match.toFixed(2)} step${m.match >= 1.995 ? 's' : ''}`;
+    $('openLink').href = m.url;
     $('mStatus').textContent = '';
-    showDetails(s, [['Source file', M.example ? 'built-in example' : M.name]]);
+    showDetails(m.record, [['Source file', M.example ? 'built-in example' : M.name]]);
   }
   function showErr(msg) {
     $('marker').innerHTML = `<div class="err">${esc(msg)}</div>`;
@@ -222,17 +155,16 @@
     const noteCount = () => { $('noteCount').textContent = `${$('note').value.length} / ${NOTE_MAX}`; };
     $('note').maxLength = NOTE_MAX;
     noteCount();
-    $('dlSvg').addEventListener('click', () => { if (M.svg) saveFile(M.svg, `iccqr-marker_${slug($('desc').value)}_${M.date8}.svg`, 'image/svg+xml'); });
+    $('dlSvg').addEventListener('click', () => { if (M.svg) saveFile(M.svg, M.fileName, 'image/svg+xml'); });
     $('copyLink').addEventListener('click', () => { if (M.url) copy(M.url, $('mStatus')); });
   }
 
   // ---------- decoder ----------
   async function initDecoder(text) {
-    let s;
-    try { s = await ICCQR.decode(text); }
+    let r;
+    try { r = await ICCQR.readMarker(text); }
     catch (e) { $('decodeError').hidden = false; $('decodeError').textContent = e.message; return false; }
-    const icc = ICCQR.buildICC(s);
-    const name = `${slug(s.desc)}_${dateText(s.date)}.icc`;
+    const { icc, fileName: name, record: s } = r;
     $('decodeView').hidden = false; $('makerView').hidden = true;
     $('lede').textContent = 'This link holds a display calibration. Save it as an .icc file on the computer the display is connected to.';
     $('dDate').textContent = dateText(s.date);

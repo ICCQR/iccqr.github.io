@@ -4,8 +4,8 @@
 //   1. src/page.html's <style> runs through the Invisible Ink PostCSS plugin, which
 //      inlines a placeholder for every @font-face marked `invisible-ink: hollow`.
 //   2. The two icons in src/icons/ are inlined as data URLs.
-//   3. The QR library (minified), src/core.js and src/app.js (with src/glyphs.json)
-//      replace the /*QRLIB*/, /*CORE*/ and /*APP*/ script placeholders.
+//   3. The iccqr package's browser bundle and src/app.js replace the /*ICCQR*/ and
+//      /*APP*/ script placeholders.
 //
 // Usage: npm run build   (or: node scripts/build.js [output path])
 'use strict';
@@ -13,7 +13,6 @@ const fs = require('fs');
 const path = require('path');
 const postcss = require('postcss');
 const invisibleInk = require('invisible-ink/postcss');
-const { minify } = require('terser');
 
 const ROOT = path.resolve(__dirname, '..');
 const src = f => path.join(ROOT, 'src', f);
@@ -41,11 +40,9 @@ function replaceOnce(html, marker, value) {
   }
 
   // 3. Scripts
-  const qr = await minify(fs.readFileSync(require.resolve('qrcode-generator/qrcode.js'), 'utf8'), { compress: true, mangle: true });
   const scripts = {
-    '/*QRLIB*/': '/* qrcode-generator 1.4.4, Copyright (c) 2009 Kazuhiko Arase, MIT license */\n' + qr.code,
-    '/*CORE*/': fs.readFileSync(src('core.js'), 'utf8'),
-    '/*APP*/': fs.readFileSync(src('app.js'), 'utf8').replace('__GLYPHS__', () => fs.readFileSync(src('glyphs.json'), 'utf8').trim()),
+    '/*ICCQR*/': fs.readFileSync(require.resolve('iccqr/dist/iccqr.min.js'), 'utf8').trim(),
+    '/*APP*/': fs.readFileSync(src('app.js'), 'utf8'),
   };
   for (const [marker, code] of Object.entries(scripts)) {
     if (/<\/script/i.test(code)) throw new Error(`${marker} would close its <script> tag early`);
@@ -53,5 +50,5 @@ function replaceOnce(html, marker, value) {
   }
 
   fs.writeFileSync(OUT, html);
-  console.log(`${path.relative(process.cwd(), OUT) || OUT}: ${html.length.toLocaleString()} bytes`);
+  console.log(`${path.relative(process.cwd(), OUT) || OUT}: ${html.length.toLocaleString()} characters, iccqr ${require('iccqr/package.json').version}`);
 })().catch(e => { console.error(e.message); process.exit(1); });

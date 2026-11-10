@@ -1,23 +1,19 @@
-name: Test
+name: Build
 
 on:
   push:
   pull_request:
 
 jobs:
-  test:
+  build:
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        node: ['20.12', '22']  # the oldest supported release, and the current LTS
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: ${{ matrix.node }}
+          node-version: '22'
           cache: npm
       - run: npm ci
-      - run: npm test
       - name: Check that index.html matches the source
         run: |
           npm run build
