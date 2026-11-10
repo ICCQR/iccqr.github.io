@@ -1,23 +1,18 @@
 {
-  "name": "iccqr",
+  "name": "iccqr-site",
   "version": "1.0.0",
   "private": true,
-  "description": "Turn a display's ICC profile into a printable QR calibration marker, and scan it to get the .icc back.",
+  "description": "The iccqr.github.io website: make a printable QR calibration marker from a display's ICC profile, and turn a scanned marker back into the .icc file.",
   "homepage": "https://iccqr.github.io/",
   "scripts": {
-    "build": "node scripts/build.js",
-    "test": "node --test test/core.test.js test/fuzz.test.js"
+    "build": "node scripts/build.js"
   },
   "engines": {
     "node": ">=20.12"
   },
   "devDependencies": {
-    "@fontsource-variable/archivo": "5.3.0",
-    "@fontsource-variable/ibm-plex-sans": "5.3.0",
-    "@fontsource/ibm-plex-mono": "5.3.0",
+    "iccqr": "1.0.0",
     "invisible-ink": "2.0.1",
-    "postcss": "8.5.9",
-    "qrcode-generator": "1.4.4",
-    "terser": "5.51.2"
+    "postcss": "8.5.9"
   }
 }
